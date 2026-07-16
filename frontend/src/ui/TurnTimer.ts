@@ -64,6 +64,14 @@ export class TurnTimer {
   hide(): void { this.gfx.setVisible(false); }
   show(): void { this.gfx.setVisible(true); }
 
+  setPosition(x: number, y: number): void {
+    this.x = x;
+    this.y = y;
+    if (this.gfx.visible) {
+      this.draw(this.remaining, this.remaining < 0.25);
+    }
+  }
+
   private draw(ratio: number, critical: boolean): void {
     this.gfx.clear();
     const filledW = this.w * ratio;

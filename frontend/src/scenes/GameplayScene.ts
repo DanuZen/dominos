@@ -47,6 +47,14 @@ export class GameplayScene extends Phaser.Scene {
   private isBotProcessing: boolean = false;
   private initialScores?: Record<string, number>;
 
+  private scorePill!: Phaser.GameObjects.Graphics;
+  private scoreText!: Phaser.GameObjects.Text;
+  private settingsBtnGfx!: Phaser.GameObjects.Graphics;
+  private settingsBtnText!: Phaser.GameObjects.Text;
+  private settingsBtnZone!: Phaser.GameObjects.Zone;
+  private settingsModalContainer!: Phaser.GameObjects.Container;
+  private isMusicMuted: boolean = false;
+
   // Drop zones
   private leftDropZone!: Phaser.GameObjects.Zone;
   private rightDropZone!: Phaser.GameObjects.Zone;
@@ -89,20 +97,20 @@ export class GameplayScene extends Phaser.Scene {
     ];
     this.playerAvatarHUD = new OpponentHUD(this, POSITIONS.PLAYER.x, POSITIONS.PLAYER.y, "left");
 
-    this.statusText = this.add.text(GAME_W / 2, GAME_H - 140, "✔️ Kartu terakhir akan dikeluarkan otomatis!", {
+    this.statusText = this.add.text(GAME_W / 2, GAME_H - 140, "", {
       fontFamily: "'Space Grotesk', sans-serif", fontSize: "16px", color: "#00d4ff", fontStyle: "bold"
     }).setOrigin(0.5).setDepth(20);
 
     // Score pill background
-    const scorePill = this.add.graphics().setDepth(19);
-    scorePill.fillStyle(0x000000, 0.4);
-    scorePill.fillRoundedRect(GAME_W / 2 - 80, 160, 160, 30, 15);
+    this.scorePill = this.add.graphics().setDepth(-5);
+    this.scorePill.fillStyle(0x000000, 0.4);
+    this.scorePill.fillRoundedRect(0, 0, 160, 30, 15);
     
-    this.add.text(GAME_W / 2, 175, "Poin: 60", {
+    this.scoreText = this.add.text(0, 0, "Poin: 60", {
       fontFamily: "'Space Grotesk', sans-serif", fontSize: "16px", color: "#ffffff", fontStyle: "bold"
-    }).setOrigin(0.5).setDepth(20);
+    }).setOrigin(0.5).setDepth(-5);
 
-    this.createBackButton();
+    this.createSettingsButton();
     this.setupDropZones();
     this.setupDragListeners();
 
@@ -120,13 +128,26 @@ export class GameplayScene extends Phaser.Scene {
         this.time.delayedCall(200, () => this.processTurn());
       });
     }
+
+    // Force initial UI positioning after all elements are created
+    const { width, height } = this.scale.gameSize;
+    const zoom = Math.min(width / GAME_W, height / GAME_H);
+    const logicalWidth = width / zoom;
+    const logicalHeight = height / zoom;
+    this.updateUIPositions(logicalWidth, logicalHeight);
   }
 
   private async connectToServer() {
     this.client = new Colyseus.Client("ws://localhost:2567");
     
     try {
-      this.room = await this.client.joinOrCreate("domino_room", { name: "Player " + Math.floor(Math.random() * 1000) });
+      const options: any = { name: "Player " + Math.floor(Math.random() * 1000) };
+      if (this.scene.settings.data) {
+        const data = this.scene.settings.data as any;
+        if (data.matchId) options.matchId = data.matchId;
+      }
+      
+      this.room = await this.client.joinOrCreate("domino_room", options);
       this.mySessionId = this.room.sessionId;
       this.setStatus("Menunggu pemain lain...");
 
@@ -278,7 +299,7 @@ export class GameplayScene extends Phaser.Scene {
       // First move zone di tengah
       const cx = GAME_W / 2;
       const cy = POSITIONS.BOARD.y;
-      if (Phaser.Math.Distance.Between(pointer.x, pointer.y, cx, cy) < hitRadius) {
+      if (Phaser.Math.Distance.Between(pointer.worldX, pointer.worldY, cx, cy) < hitRadius) {
         chosenEdge = "right";
       }
     } else if (layout) {
@@ -287,13 +308,13 @@ export class GameplayScene extends Phaser.Scene {
       const canPlayRight = edgeValid === "right" || edgeValid === "both";
 
       if (canPlayLeft && layout.leftDropZone) {
-        if (Phaser.Math.Distance.Between(pointer.x, pointer.y, this.leftDropZone.x, this.leftDropZone.y) < hitRadius) {
+        if (Phaser.Math.Distance.Between(pointer.worldX, pointer.worldY, this.leftDropZone.x, this.leftDropZone.y) < hitRadius) {
           chosenEdge = "left";
         }
       }
       
       if (!chosenEdge && canPlayRight && layout.rightDropZone) {
-        if (Phaser.Math.Distance.Between(pointer.x, pointer.y, this.rightDropZone.x, this.rightDropZone.y) < hitRadius) {
+        if (Phaser.Math.Distance.Between(pointer.worldX, pointer.worldY, this.rightDropZone.x, this.rightDropZone.y) < hitRadius) {
           chosenEdge = "right";
         }
       }
@@ -324,7 +345,6 @@ export class GameplayScene extends Phaser.Scene {
     const current = this.gameState.players[this.gameState.currentTurnIndex];
     const isHuman = current.id === "human" && !this.autoPlay;
 
-    this.setStatus(`Giliran: ${current.name}`);
     this.renderState();
 
     if (!isHuman) {
@@ -460,6 +480,29 @@ export class GameplayScene extends Phaser.Scene {
     }
   }
 
+  private onPlayerTimeout(): void {
+    if (this.isOnline || this.gameState.status === "finished") return;
+    
+    showActionToast(this, GAME_W / 2, POSITIONS.PLAYER.y - 80, "Waktu habis! Auto-play...");
+    
+    this.time.delayedCall(500, () => {
+      const current = this.gameState.players[0]; 
+      const chosen = chooseBotTile(this.gameState, "medium");
+      
+      if (!chosen) {
+        this.onPlayerPass();
+      } else {
+        const edge = getValidEdge(chosen, this.gameState.board, this.gameState.status === "first_move");
+        const chosenEdge: "left" | "right" = edge === "both"
+          ? (Math.random() < 0.5 ? "left" : "right")
+          : (edge as "left" | "right");
+        
+        this.hideDropZones();
+        this.commitPlayerMove(chosen, chosenEdge);
+      }
+    });
+  }
+
   // ─── RENDER ──────────────────────────────────────────────
 
   private renderState(): void {
@@ -468,7 +511,8 @@ export class GameplayScene extends Phaser.Scene {
     this.playerHand.render(
       this.gameState,
       (tile) => this.onPlayerTileClick(tile),
-      () => this.onPlayerPass()
+      () => this.onPlayerPass(),
+      () => this.onPlayerTimeout()
     );
     
     // Render Player Avatar
@@ -541,44 +585,175 @@ export class GameplayScene extends Phaser.Scene {
   }
 
   private drawBackground(): void {
-    // Solid background
-    this.bgGfx.fillStyle(C.BG); 
-    this.bgGfx.fillRect(0, 0, GAME_W, GAME_H);
-    
-    // Draw 3D-like Oval Table
-    const tableW = 1000;
-    const tableH = 500;
-    const cx = GAME_W / 2;
-    const cy = GAME_H / 2;
-    
-    // Outer Glow / Shadow (Smooth Rounded Rect instead of jagged Ellipse)
-    const radius = tableH / 2; // makes it a perfect pill shape
-    this.bgGfx.lineStyle(20, C.TABLE_GLOW, 0.2);
-    this.bgGfx.strokeRoundedRect(cx - tableW/2 - 5, cy - tableH/2 - 5, tableW + 10, tableH + 10, radius + 5);
-    
-    // Table Edge (Rim)
-    this.bgGfx.fillStyle(C.TABLE_EDGE);
-    this.bgGfx.fillRoundedRect(cx - tableW/2, cy - tableH/2, tableW, tableH, radius);
-    this.bgGfx.lineStyle(6, C.BLUE, 0.8); // Inner neon rim
-    this.bgGfx.strokeRoundedRect(cx - tableW/2, cy - tableH/2, tableW, tableH, radius);
-    
-    // Table Inner Felt
-    this.bgGfx.fillStyle(C.TABLE_CENTER);
-    this.bgGfx.fillRoundedRect(cx - tableW/2 + 20, cy - tableH/2 + 20, tableW - 40, tableH - 40, radius - 20);
+    // Background Image
+    const bg = this.add.image(GAME_W / 2, GAME_H / 2, "bg_game").setDepth(-10);
+    const updateBg = () => {
+      const { width, height } = this.scale.gameSize;
+      const zoom = Math.min(width / GAME_W, height / GAME_H);
+      this.cameras.main.setZoom(zoom);
+      this.cameras.main.centerOn(GAME_W / 2, GAME_H / 2);
+
+      const logicalWidth = width / zoom;
+      const logicalHeight = height / zoom;
+
+      const scaleX = logicalWidth / bg.width;
+      const scaleY = logicalHeight / bg.height;
+      const bgScale = Math.max(scaleX, scaleY);
+      bg.setScale(bgScale);
+      
+      this.updateUIPositions(logicalWidth, logicalHeight);
+    };
+    this.scale.on('resize', updateBg, this);
+    this.events.once('shutdown', () => this.scale.off('resize', updateBg, this));
+    updateBg();
   }
 
-  private createBackButton(): void {
-    const g = this.add.graphics();
-    const x = GAME_W-60; const y = 18;
-    g.fillStyle(C.SURFACE2); g.fillRect(x-44, y-12, 88, 24);
-    g.lineStyle(2, C.GRAY);  g.strokeRect(x-44, y-12, 88, 24);
-    this.add.text(x, y, "← MENU", {
-      fontFamily: "'Space Grotesk', sans-serif", fontSize: "11px", color: "#888888",
+  private createSettingsButton(): void {
+    this.settingsBtnGfx = this.add.graphics().setDepth(20);
+    this.settingsBtnText = this.add.text(0, 0, "⚙️", {
+      fontFamily: "'Space Grotesk', sans-serif", fontSize: "28px", color: "#ffffff",
+    }).setOrigin(0.5).setDepth(21);
+    this.settingsBtnZone = this.add.zone(0, 0, 48, 48).setInteractive();
+    
+    this.settingsBtnZone.on("pointerdown", () => this.toggleSettingsModal());
+    this.settingsBtnZone.on("pointerover", () => {
+      this.input.setDefaultCursor("pointer");
+      this.settingsBtnText.setScale(1.1);
+    });
+    this.settingsBtnZone.on("pointerout",  () => {
+      this.input.setDefaultCursor("default");
+      this.settingsBtnText.setScale(1);
+    });
+    
+    this.createSettingsModal();
+  }
+
+  private toggleSettingsModal(): void {
+    if (this.settingsModalContainer) {
+      this.settingsModalContainer.setVisible(!this.settingsModalContainer.visible);
+    }
+  }
+
+  private createSettingsModal(): void {
+    this.settingsModalContainer = this.add.container(GAME_W / 2, GAME_H / 2).setDepth(100).setVisible(false);
+    
+    // Background Overlay (blocks clicks behind it)
+    const overlay = this.add.graphics();
+    overlay.fillStyle(0x000000, 0.7);
+    overlay.fillRect(-GAME_W*2, -GAME_H*2, GAME_W * 4, GAME_H * 4);
+    
+    // Make overlay interactive to block clicks
+    const blockerZone = this.add.zone(0, 0, GAME_W*4, GAME_H*4).setInteractive();
+
+    // Modal Box
+    overlay.fillStyle(0x16284a, 0.95);
+    overlay.fillRoundedRect(-150, -100, 300, 200, 16);
+    overlay.lineStyle(2, C.BLUE);
+    overlay.strokeRoundedRect(-150, -100, 300, 200, 16);
+    
+    const title = this.add.text(0, -70, "PENGATURAN", {
+      fontFamily: "'Space Grotesk', sans-serif", fontSize: "18px", color: "#ffffff", fontStyle: "bold"
     }).setOrigin(0.5);
-    const z = this.add.zone(x, y, 88, 24).setInteractive();
-    z.on("pointerdown", () => this.scene.start("MenuScene"));
-    z.on("pointerover", () => this.input.setDefaultCursor("pointer"));
-    z.on("pointerout",  () => this.input.setDefaultCursor("default"));
+
+    const closeBtn = this.add.text(120, -70, "✖", {
+      fontFamily: "Arial", fontSize: "20px", color: "#ff5555"
+    }).setOrigin(0.5).setInteractive();
+    closeBtn.on("pointerdown", () => this.settingsModalContainer.setVisible(false));
+    closeBtn.on("pointerover", () => this.input.setDefaultCursor("pointer"));
+    closeBtn.on("pointerout", () => this.input.setDefaultCursor("default"));
+
+    // Music Button
+    const musicBtnGfx = this.add.graphics();
+    musicBtnGfx.fillStyle(C.SURFACE2);
+    musicBtnGfx.fillRoundedRect(-100, -30, 200, 44, 8);
+    musicBtnGfx.lineStyle(2, C.YELLOW);
+    musicBtnGfx.strokeRoundedRect(-100, -30, 200, 44, 8);
+    
+    const musicText = this.add.text(0, -8, this.isMusicMuted ? "🎵 Nyalakan Musik" : "🎵 Matikan Musik", {
+      fontFamily: "'Space Grotesk', sans-serif", fontSize: "16px", color: "#ffffff"
+    }).setOrigin(0.5);
+    
+    const musicZone = this.add.zone(0, -8, 200, 44).setInteractive();
+    musicZone.on("pointerdown", () => {
+      this.isMusicMuted = !this.isMusicMuted;
+      musicText.setText(this.isMusicMuted ? "🎵 Nyalakan Musik" : "🎵 Matikan Musik");
+    });
+    musicZone.on("pointerover", () => this.input.setDefaultCursor("pointer"));
+    musicZone.on("pointerout", () => this.input.setDefaultCursor("default"));
+
+    // Exit Button
+    const exitBtnGfx = this.add.graphics();
+    exitBtnGfx.fillStyle(0xcc0000);
+    exitBtnGfx.fillRoundedRect(-100, 30, 200, 44, 8);
+    exitBtnGfx.lineStyle(2, 0xff5555);
+    exitBtnGfx.strokeRoundedRect(-100, 30, 200, 44, 8);
+    
+    const exitText = this.add.text(0, 52, "🚪 Keluar", {
+      fontFamily: "'Space Grotesk', sans-serif", fontSize: "16px", color: "#ffffff", fontStyle: "bold"
+    }).setOrigin(0.5);
+    
+    const exitZone = this.add.zone(0, 52, 200, 44).setInteractive();
+    exitZone.on("pointerdown", () => this.scene.start("MenuScene"));
+    exitZone.on("pointerover", () => this.input.setDefaultCursor("pointer"));
+    exitZone.on("pointerout", () => this.input.setDefaultCursor("default"));
+
+    this.settingsModalContainer.add([blockerZone, overlay, title, closeBtn, musicBtnGfx, musicText, musicZone, exitBtnGfx, exitText, exitZone]);
+  }
+
+  private updateUIPositions(logicalWidth: number, logicalHeight: number): void {
+    const leftX = (GAME_W / 2) - (logicalWidth / 2);
+    const rightX = (GAME_W / 2) + (logicalWidth / 2);
+    const topY = (GAME_H / 2) - (logicalHeight / 2);
+    const bottomY = (GAME_H / 2) + (logicalHeight / 2);
+
+    POSITIONS.PLAYER.x = leftX + 180;
+    POSITIONS.PLAYER.y = bottomY - 120;
+    POSITIONS.HAND.x = GAME_W / 2;
+    POSITIONS.HAND.y = bottomY - 65;
+    POSITIONS.BOT_LEFT.x = leftX + 120;
+    POSITIONS.BOT_LEFT.y = GAME_H / 2;
+    POSITIONS.BOT_RIGHT.x = rightX - 120;
+    POSITIONS.BOT_RIGHT.y = GAME_H / 2;
+    POSITIONS.BOT_TOP.x = GAME_W / 2;
+    POSITIONS.BOT_TOP.y = topY + 100;
+
+    if (this.gameHUD) this.gameHUD.setPosition(leftX, topY);
+    if (this.oppHUDs && this.oppHUDs.length === 3) {
+      this.oppHUDs[0].setPosition(POSITIONS.BOT_LEFT.x, POSITIONS.BOT_LEFT.y);
+      this.oppHUDs[1].setPosition(POSITIONS.BOT_TOP.x, POSITIONS.BOT_TOP.y);
+      this.oppHUDs[2].setPosition(POSITIONS.BOT_RIGHT.x, POSITIONS.BOT_RIGHT.y);
+    }
+    if (this.playerAvatarHUD) {
+      this.playerAvatarHUD.setPosition(POSITIONS.PLAYER.x, POSITIONS.PLAYER.y);
+    }
+    
+    if (this.statusText) {
+      this.statusText.setPosition(GAME_W / 2, bottomY - 140);
+    }
+    
+    if (this.scorePill && this.scoreText) {
+      this.scorePill.clear();
+      this.scorePill.fillStyle(0x000000, 0.4);
+      this.scorePill.fillRoundedRect(GAME_W / 2 - 80, POSITIONS.BOARD.y - 140, 160, 30, 15);
+      this.scoreText.setPosition(GAME_W / 2, POSITIONS.BOARD.y - 125);
+    }
+
+    if (this.settingsBtnGfx && this.settingsBtnText && this.settingsBtnZone) {
+      const bx = rightX - 40;
+      const by = topY + 40;
+      this.settingsBtnGfx.clear();
+      this.settingsBtnGfx.fillStyle(0x16284a, 0.8);
+      this.settingsBtnGfx.fillCircle(bx, by, 24);
+      this.settingsBtnGfx.lineStyle(2, 0x00d4ff);
+      this.settingsBtnGfx.strokeCircle(bx, by, 24);
+      
+      this.settingsBtnText.setPosition(bx, by);
+      this.settingsBtnZone.setPosition(bx, by);
+    }
+
+    if (this.gameState && this.gameState.status) {
+      this.renderState();
+    }
   }
 
   private setStatus(msg: string): void { this.statusText?.setText(msg); }

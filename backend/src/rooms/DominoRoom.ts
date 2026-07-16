@@ -2,12 +2,21 @@ import { Room, Client } from "colyseus";
 import { GameState, PlayerSchema, TileSchema, PlacedTileSchema, BoardStateSchema } from "./schema/GameState";
 import { GameState as EngineGameState, Tile as EngineTile } from "../types";
 import { initializeGame, playTile, doPass } from "../engine/game";
+import { chooseBotTile } from "../engine/bot";
+import { getValidEdge } from "../engine/board";
+import { prisma } from "../services/Matchmaker";
 
 export class DominoRoom extends Room<{ state: GameState }> {
   maxClients = 4;
   private engineState!: EngineGameState;
+  private turnTimeout: any;
+  private matchId?: string;
 
   onCreate(options: any) {
+    if (options.matchId) {
+      this.matchId = options.matchId;
+    }
+
     this.setState(new GameState());
     this.state.status = "waiting";
     this.state.round = 1;
@@ -71,6 +80,7 @@ export class DominoRoom extends Room<{ state: GameState }> {
     
     this.engineState = initializeGame(ids, names);
     this.syncSchema();
+    this.startTurnTimer();
   }
 
   private syncSchema() {
@@ -129,6 +139,7 @@ export class DominoRoom extends Room<{ state: GameState }> {
 
   private handlePlayTile(client: Client, message: { tile: EngineTile, edge?: "left" | "right" }) {
     if (this.state.currentTurn !== client.sessionId) return;
+    if (this.turnTimeout) { this.turnTimeout.clear(); this.turnTimeout = null; }
 
     const result = playTile(this.engineState, client.sessionId, message.tile, message.edge);
     if (result.success) {
@@ -137,15 +148,19 @@ export class DominoRoom extends Room<{ state: GameState }> {
       
       if (result.roundResult) {
         this.broadcast("ROUND_RESULT", result.roundResult);
-        // Start next round logic could go here
+        this.handleRoundEnd();
+      } else {
+        this.startTurnTimer();
       }
     } else {
       client.send("ERROR", result.error);
+      this.startTurnTimer();
     }
   }
 
   private handlePass(client: Client) {
     if (this.state.currentTurn !== client.sessionId) return;
+    if (this.turnTimeout) { this.turnTimeout.clear(); this.turnTimeout = null; }
     
     const result = doPass(this.engineState, client.sessionId);
     if (result.success) {
@@ -154,9 +169,116 @@ export class DominoRoom extends Room<{ state: GameState }> {
       
       if (result.roundResult) {
         this.broadcast("ROUND_RESULT", result.roundResult);
+        this.handleRoundEnd();
+      } else {
+        this.startTurnTimer();
       }
     } else {
       client.send("ERROR", result.error);
+      this.startTurnTimer();
     }
   }
+
+  private startTurnTimer() {
+    if (this.turnTimeout) {
+      this.turnTimeout.clear();
+      this.turnTimeout = null;
+    }
+    
+    if (this.engineState.status === "finished") return;
+
+    this.turnTimeout = this.clock.setTimeout(() => {
+      this.autoPlayCurrentTurn();
+    }, 10000);
+  }
+
+  private autoPlayCurrentTurn() {
+    if (this.engineState.status === "finished") return;
+
+    const currentPlayerId = this.engineState.players[this.engineState.currentTurnIndex].id;
+    const chosen = chooseBotTile(this.engineState, "medium");
+
+    let result;
+    if (!chosen) {
+      result = doPass(this.engineState, currentPlayerId);
+    } else {
+      const edge = getValidEdge(chosen, this.engineState.board, this.engineState.status === "first_move");
+      const chosenEdge = edge === "both" 
+        ? (Math.random() < 0.5 ? "left" : "right")
+        : (edge as "left" | "right");
+      
+      result = playTile(this.engineState, currentPlayerId, chosen, chosenEdge);
+    }
+
+    if (!result.success) {
+      result = doPass(this.engineState, currentPlayerId);
+    }
+
+    if (result.success) {
+      this.engineState = result.nextState;
+      this.syncSchema();
+      
+      if (result.roundResult) {
+        this.broadcast("ROUND_RESULT", result.roundResult);
+        this.handleRoundEnd();
+      } else {
+        this.startTurnTimer();
+      }
+    }
+  }
+
+  private handleRoundEnd() {
+    if (this.state.round < 6) {
+      this.clock.setTimeout(() => {
+        this.state.round += 1;
+        
+        // Pass existing players but reset hand and board
+        const ids = Array.from(this.state.players.keys());
+        const names = ids.map(id => this.state.players.get(id)!.name);
+        
+        // Retain cumulative scores! 
+        // initializeGame doesn't take initial scores in standard constructor unless modified
+        // Wait, initializeGame(ids, names, initialScores?) is modified in GameplayScene... 
+        // let's just initialize and overwrite scores with cumulative
+        const currentScores = ids.map(id => this.state.players.get(id)!.score);
+        this.engineState = initializeGame(ids, names, currentScores);
+        this.syncSchema();
+        this.startTurnTimer();
+      }, 5000);
+    } else {
+      this.finishMatch();
+    }
+  }
+
+  private async finishMatch() {
+    this.broadcast("MATCH_FINISHED");
+    if (this.matchId) {
+      try {
+        // Save results to Prisma
+        const sorted = Array.from(this.state.players.values()).sort((a, b) => a.score - b.score);
+        // Top 2 advance
+        const winners = sorted.slice(0, 2).map(p => p.id);
+        
+        for (const p of sorted) {
+          await prisma.matchPlayer.updateMany({
+            where: { matchId: this.matchId, userId: p.id },
+            data: { cumulativeScore: p.score, isWinner: winners.includes(p.id) }
+          });
+        }
+        
+        await prisma.match.update({
+          where: { id: this.matchId },
+          data: { status: "COMPLETED" }
+        });
+        
+      } catch (err) {
+        console.error("Failed to save match result", err);
+      }
+    }
+    
+    this.clock.setTimeout(() => {
+      this.disconnect();
+    }, 5000);
+  }
 }
+

@@ -35,13 +35,16 @@ export class PlayerHand {
   render(
     gameState: GameState,
     onTileClick: (tile: Tile) => void,
-    onPass: () => void
+    onPass: () => void,
+    onTimeout: () => void = () => {}
   ): void {
     this.clearSelection();
     this.tileSprites.forEach((s) => s.destroy());
     this.tileSprites = [];
     this.draggingSprite = null;
     this.pendingDragSprite = null;
+
+    this.timer.setPosition(POSITIONS.HAND.x, POSITIONS.HAND.y - 70);
 
     // Hapus listener scene sebelumnya agar tidak menumpuk
     this.scene.input.off("pointerdown", this.onScenePointerDown, this);
@@ -103,7 +106,7 @@ export class PlayerHand {
     // Indikator giliran & timer
     if (isMyTurn) {
       this.timer.show();
-      this.timer.start(30000); // 30 detik per giliran
+      this.timer.start(10000, onTimeout); // 10 detik per giliran
     } else {
       this.timer.hide();
       this.timer.reset();
@@ -160,6 +163,7 @@ export class PlayerHand {
     // Cari tile sprite pertama (teratas) yang ada dalam tangan kita
     for (const hit of hits) {
       if (hit instanceof DominoTileSprite && this.tileSprites.includes(hit)) {
+        if (!hit.input || !hit.input.enabled) continue; // Abaikan tile yang disabled
         this.pendingDragSprite = hit;
         this.pendingDragPointerX = pointer.x;
         this.pendingDragPointerY = pointer.y;

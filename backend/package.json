@@ -14,13 +14,18 @@
     "@colyseus/core": "^0.17.44",
     "@colyseus/schema": "^4.0.27",
     "@colyseus/ws-transport": "^0.17.13",
+    "@prisma/client": "^6.19.3",
     "colyseus": "^0.17.10",
     "cors": "^2.8.6",
-    "express": "^5.2.1"
+    "express": "^5.2.1",
+    "ioredis": "^5.11.1",
+    "uuid": "^14.0.1"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
+    "@types/uuid": "^10.0.0",
+    "prisma": "^6.19.3",
     "ts-node-dev": "^2.0.0",
     "typescript": "^6.0.3"
   }

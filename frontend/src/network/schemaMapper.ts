@@ -58,6 +58,7 @@ export function mapSchemaToGameState(schemaState: any): GameState {
     board,
     currentTurnIndex: currentTurnIndex >= 0 ? currentTurnIndex : 0,
     status: schemaState.status as GameStatus,
-    consecutivePassCount: 0
+    consecutivePassCount: 0,
+    roundPoints: 0
   };
 }

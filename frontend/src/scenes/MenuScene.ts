@@ -13,14 +13,24 @@ export class MenuScene extends Phaser.Scene {
   create(): void {
     const gfx = this.add.graphics();
 
-    // Background
-    gfx.fillStyle(C.BG);
-    gfx.fillRect(0, 0, GAME_W, GAME_H);
+    // Background Image
+    const bg = this.add.image(GAME_W / 2, GAME_H / 2, "bg_lobby").setDepth(-10);
+    const updateBg = () => {
+      const { width, height } = this.scale.gameSize;
+      const zoom = Math.min(width / GAME_W, height / GAME_H);
+      this.cameras.main.setZoom(zoom);
+      this.cameras.main.centerOn(GAME_W / 2, GAME_H / 2);
 
-    // Horizontal separator lines
-    gfx.lineStyle(2, C.GRAY);
-    gfx.lineBetween(60, 180, GAME_W - 60, 180);
-    gfx.lineBetween(60, GAME_H - 200, GAME_W - 60, GAME_H - 200);
+      const logicalWidth = width / zoom;
+      const logicalHeight = height / zoom;
+      const scaleX = logicalWidth / bg.width;
+      const scaleY = logicalHeight / bg.height;
+      bg.setScale(Math.max(scaleX, scaleY));
+    };
+    this.scale.on('resize', updateBg, this);
+    this.events.once('shutdown', () => this.scale.off('resize', updateBg, this));
+    updateBg();
+    // Teks dan garis lama dihapus agar tidak bertumpuk dengan gambar background
 
     // Judul
     this.add.text(GAME_W / 2, 100, "DOMINO", {
@@ -47,8 +57,31 @@ export class MenuScene extends Phaser.Scene {
     }).setOrigin(0.5);
 
     // Tombol MAIN MULTIPLAYER ONLINE
-    this.createButton(GAME_W / 2, 340, "🌐  MAIN ONLINE (MULTIPLAYER)", C.YELLOW, C.BLACK, () => {
-      this.scene.start("GameplayScene", { isOnline: true });
+    this.createButton(GAME_W / 2, 340, "🌐  MAIN ONLINE (MULTIPLAYER)", C.YELLOW, C.BLACK, async () => {
+      try {
+        const userId = "player_" + Math.floor(Math.random() * 10000);
+        const res = await fetch("http://localhost:2567/api/tournament/join", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId })
+        });
+        const data = await res.json();
+        console.log("Matchmaking Response:", data);
+        
+        // Simulasi menunggu queue penuh, lalu masuk game
+        this.add.text(GAME_W / 2, 375, "Mencari pemain (Matchmaking)...", {
+          fontFamily: "'Inter', sans-serif", fontSize: "12px", color: C.YELLOW
+        }).setOrigin(0.5);
+        
+        setTimeout(() => {
+          this.scene.start("GameplayScene", { isOnline: true, userId, matchId: data.matchId });
+        }, 2000);
+        
+      } catch (err) {
+        console.error("Gagal terhubung ke Matchmaking API", err);
+        // Fallback
+        this.scene.start("GameplayScene", { isOnline: true });
+      }
     });
 
     // Tombol MAIN OFFLINE (vs Bot)
@@ -67,10 +100,6 @@ export class MenuScene extends Phaser.Scene {
       fontSize: "11px",
       color: "#444444",
     }).setOrigin(0.5);
-
-    // Dekorasi domino tile kiri & kanan
-    this.drawDecorativeTile(gfx, 160, GAME_H / 2, 5, 4);
-    this.drawDecorativeTile(gfx, GAME_W - 160, GAME_H / 2, 3, 6);
   }
 
   private createButton(

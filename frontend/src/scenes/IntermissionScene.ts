@@ -26,8 +26,23 @@ export class IntermissionScene extends Phaser.Scene {
 
   create(): void {
     const gfx = this.add.graphics();
-    gfx.fillStyle(C.BG);
-    gfx.fillRect(0, 0, GAME_W, GAME_H);
+    // Background Image
+    const bg = this.add.image(GAME_W / 2, GAME_H / 2, "bg_lobby").setDepth(-10);
+    const updateBg = () => {
+      const { width, height } = this.scale.gameSize;
+      const zoom = Math.min(width / GAME_W, height / GAME_H);
+      this.cameras.main.setZoom(zoom);
+      this.cameras.main.centerOn(GAME_W / 2, GAME_H / 2);
+
+      const logicalWidth = width / zoom;
+      const logicalHeight = height / zoom;
+      const scaleX = logicalWidth / bg.width;
+      const scaleY = logicalHeight / bg.height;
+      bg.setScale(Math.max(scaleX, scaleY));
+    };
+    this.scale.on('resize', updateBg, this);
+    this.events.once('shutdown', () => this.scale.off('resize', updateBg, this));
+    updateBg();
 
     // Header
     this.add.text(GAME_W / 2, 80, `HASIL RONDE ${this.sceneData.roundNumber}`, {

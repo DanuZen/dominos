@@ -16,8 +16,12 @@ export class OpponentHUD {
   private x: number;
   private y: number;
   private gfx: Phaser.GameObjects.Graphics;
-  private pointsText: Phaser.GameObjects.Text;
   private avatarInitials: Phaser.GameObjects.Text;
+  private nameText: Phaser.GameObjects.Text;
+  private cardCountText: Phaser.GameObjects.Text;
+  private badgeImg: Phaser.GameObjects.Image;
+  private badgePip: Phaser.GameObjects.Arc;
+  private turnArrow?: Phaser.GameObjects.Text;
 
   constructor(
     scene: Phaser.Scene,
@@ -41,26 +45,33 @@ export class OpponentHUD {
     // Avatar Text
     this.avatarInitials = scene.add.text(x, y - 10, "?", {
       fontFamily: "'Space Grotesk', sans-serif",
-      fontSize: "24px", color: "#ffffff", fontStyle: "bold",
+      fontSize: "36px", color: "#ffffff", fontStyle: "bold",
     }).setOrigin(0.5).setDepth(2);
 
     // Player Name
-    this.nameText = scene.add.text(x, y + 30, "...", {
-      ...textStyle, fontSize: "14px", color: "#dddddd"
+    this.nameText = scene.add.text(x, y + 42, "...", {
+      ...textStyle, fontSize: "16px", color: "#dddddd"
     }).setOrigin(0.5).setDepth(2);
     
     // Score Text (will be drawn next to the gem)
-    this.pointsText = scene.add.text(x + 8, y + 48, "0", {
+    this.pointsText = scene.add.text(x + 10, y + 62, "0", {
       fontFamily: "'Space Grotesk', sans-serif",
-      fontSize: "14px", color: "#ffffff", fontStyle: "bold",
+      fontSize: "16px", color: "#ffffff", fontStyle: "bold",
     }).setOrigin(0.5).setDepth(2);
 
-    // Turn/Alarm/Card Count Indicator (placed slightly offset from the avatar)
+    // Card Count Badge Background (Actual Domino Image)
+    this.badgeImg = scene.add.image(x + 50, y, "domino_00")
+      .setDisplaySize(24, 44)
+      .setDepth(3);
+      
+    this.badgePip = scene.add.circle(x + 50, y - 10, 3, 0xcc0000).setDepth(4);
+
+    // Turn/Alarm/Card Count Indicator (Domino Tile Style)
     this.cardCountText = scene.add
-      .text(x + 40, y - 5, "7", {
+      .text(x + 50, y + 10, "7", {
         fontFamily: "'Space Grotesk', sans-serif",
         fontSize: "14px",
-        color: "#ffffff",
+        color: "#cc0000",
         fontStyle: "bold"
       })
       .setOrigin(0.5).setDepth(4);
@@ -80,46 +91,42 @@ export class OpponentHUD {
 
     const cx = this.x;
     const cy = this.y - 10;
-    const r = 28;
-
-    // 1. Draw Alarm/Card Count Badge background
-    const alarmX = cx + 40;
-    const alarmY = cy;
-    this.gfx.fillStyle(C.ALARM);
-    this.gfx.fillRoundedRect(alarmX - 12, alarmY - 12, 24, 24, 6);
-    this.gfx.lineStyle(2, C.YELLOW);
-    this.gfx.strokeRoundedRect(alarmX - 12, alarmY - 12, 24, 24, 6);
+    const r = 38;
 
     // 2. Draw Score Gem (Pink Diamond)
-    const gemX = cx - 20;
-    const gemY = cy + 58;
+    const gemX = cx - 25;
+    const gemY = cy + 72;
     this.gfx.fillStyle(C.GEM);
     this.gfx.beginPath();
-    this.gfx.moveTo(gemX, gemY - 6);
-    this.gfx.lineTo(gemX + 6, gemY);
-    this.gfx.lineTo(gemX, gemY + 6);
-    this.gfx.lineTo(gemX - 6, gemY);
+    this.gfx.moveTo(gemX, gemY - 7);
+    this.gfx.lineTo(gemX + 7, gemY);
+    this.gfx.lineTo(gemX, gemY + 7);
+    this.gfx.lineTo(gemX - 7, gemY);
     this.gfx.closePath();
     this.gfx.fillPath();
 
     // 3. Draw Avatar Ring
     if (isCurrentTurn) {
-      this.gfx.lineStyle(6, C.BLUE, 0.6);
-      this.gfx.strokeCircle(cx, cy, r + 6);
-      this.gfx.lineStyle(2, C.YELLOW, 1);
-      this.gfx.strokeCircle(cx, cy, r + 2);
+      // Glow effect
+      this.gfx.fillStyle(C.YELLOW, 0.2);
+      this.gfx.fillCircle(cx, cy, r + 12);
+      
+      this.gfx.lineStyle(8, C.BLUE, 0.7);
+      this.gfx.strokeCircle(cx, cy, r + 7);
+      this.gfx.lineStyle(3, C.YELLOW, 1);
+      this.gfx.strokeCircle(cx, cy, r + 3);
     }
 
     // Avatar background
-    this.gfx.fillStyle(C.SURFACE);
+    this.gfx.fillStyle(0x111c38); // Darker rich blue
     this.gfx.fillCircle(cx, cy, r);
 
     // Avatar border (Gold Frame)
-    this.gfx.lineStyle(3, C.YELLOW);
+    this.gfx.lineStyle(4, C.YELLOW);
     this.gfx.strokeCircle(cx, cy, r);
-    // Inner green/blue accent
+    // Inner accent
     this.gfx.lineStyle(2, C.POSITIVE);
-    this.gfx.strokeCircle(cx, cy, r - 3);
+    this.gfx.strokeCircle(cx, cy, r - 5);
 
     this.avatarInitials.setText(player.name.charAt(0).toUpperCase());
     this.nameText.setText(player.name);
@@ -129,6 +136,18 @@ export class OpponentHUD {
       player.hand.length === 0 ? "0" : `${player.hand.length}`
     );
 
-    this.turnArrow.setVisible(isCurrentTurn);
+    this.turnArrow?.setVisible(isCurrentTurn);
+  }
+
+  setPosition(x: number, y: number): void {
+    this.x = x;
+    this.y = y;
+    this.avatarInitials.setPosition(x, y - 10);
+    this.nameText.setPosition(x, y + 42);
+    this.pointsText.setPosition(x + 10, y + 62);
+    this.badgeImg.setPosition(x + 50, y);
+    this.badgePip.setPosition(x + 50, y - 10);
+    this.cardCountText.setPosition(x + 50, y + 10);
+    this.turnArrow?.setPosition(x, y - 60);
   }
 }
